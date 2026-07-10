@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>相册生成管理系统</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <aside class="control-panel" aria-label="相册设置">
+        <div class="brand-row">
+          <div>
+            <p class="eyebrow">Album Studio</p>
+            <h1>相册生成管理系统</h1>
+          </div>
+          <span id="photoCount" class="count-pill">0 张</span>
+        </div>
+
+        <section id="dropZone" class="upload-zone">
+          <input id="fileInput" type="file" accept="image/*" multiple hidden />
+          <button id="chooseFiles" class="primary-action" type="button">
+            <span aria-hidden="true">+</span>
+            上传图片
+          </button>
+          <span class="muted-text">JPG / PNG / WebP</span>
+        </section>
+
+        <section>
+          <div class="section-heading">
+            <h2>相册集</h2>
+            <span>逐页设置</span>
+          </div>
+          <div class="album-set-row">
+            <label>
+              <span>页数</span>
+              <input id="pageCountInput" type="number" min="1" max="30" value="4" />
+            </label>
+            <button id="applyPageCount" class="ghost-button" type="button">应用</button>
+          </div>
+          <p class="muted-text">选择底部页缩略图后，可为当前页单独选择风格。</p>
+        </section>
+
+        <section class="text-panel">
+          <div class="section-heading">
+            <h2>文本框</h2>
+            <button id="addTextBox" class="ghost-button" type="button">新增</button>
+          </div>
+          <div class="selected-photo">
+            <span id="selectedTextName">未选中</span>
+            <div class="selected-actions">
+              <button id="deleteTextBox" class="ghost-button" type="button" disabled>删除</button>
+            </div>
+          </div>
+          <div class="field-group">
+            <label for="textContent">文本内容</label>
+            <textarea id="textContent" rows="3" maxlength="120" disabled placeholder="新增或选中文本框后编辑"></textarea>
+          </div>
+          <div class="range-grid">
+            <label>
+              <span>X</span>
+              <input id="textX" type="range" min="0" max="100" value="50" disabled />
+            </label>
+            <label>
+              <span>Y</span>
+              <input id="textY" type="range" min="0" max="100" value="50" disabled />
+            </label>
+            <label>
+              <span>宽度</span>
+              <input id="textWidth" type="range" min="180" max="980" value="520" disabled />
+            </label>
+            <label>
+              <span>字号</span>
+              <input id="textSize" type="range" min="22" max="96" value="48" disabled />
+            </label>
+            <label>
+              <span>旋转</span>
+              <input id="textRotate" type="range" min="-45" max="45" value="0" disabled />
+            </label>
+            <label>
+              <span>颜色</span>
+              <input id="textColor" type="color" value="#171816" disabled />
+            </label>
+          </div>
+        </section>
+
+        <section>
+          <div class="section-heading">
+            <h2>当前页风格</h2>
+            <span>10 款</span>
+          </div>
+          <select id="pageStyleSelect" class="style-select" aria-label="当前页风格"></select>
+          <div id="styleGrid" class="style-grid"></div>
+        </section>
+
+        <section>
+          <div class="section-heading">
+            <h2>排版</h2>
+          </div>
+          <div class="segmented-control" role="group" aria-label="排版密度">
+            <button type="button" class="is-active" data-layout="balanced">均衡</button>
+            <button type="button" data-layout="airy">留白</button>
+            <button type="button" data-layout="collage">拼贴</button>
+          </div>
+        </section>
+
+        <section class="position-panel">
+          <div class="section-heading">
+            <h2>照片位置</h2>
+            <label class="switch-control">
+              <input id="freeMoveToggle" type="checkbox" />
+              <span></span>
+            </label>
+          </div>
+          <div class="selected-photo">
+            <span id="selectedPhotoName">未选中</span>
+            <div class="selected-actions">
+              <button id="deleteSelectedPhoto" class="ghost-button" type="button" disabled>删除</button>
+              <button id="resetPageLayout" class="ghost-button" type="button" disabled>重置本页</button>
+            </div>
+          </div>
+          <div class="range-grid">
+            <label>
+              <span>X</span>
+              <input id="photoX" type="range" min="0" max="100" value="50" disabled />
+            </label>
+            <label>
+              <span>Y</span>
+              <input id="photoY" type="range" min="0" max="100" value="50" disabled />
+            </label>
+            <label>
+              <span>大小</span>
+              <input id="photoScale" type="range" min="55" max="145" value="100" disabled />
+            </label>
+            <label>
+              <span>旋转</span>
+              <input id="photoRotate" type="range" min="-45" max="45" value="0" disabled />
+            </label>
+          </div>
+        </section>
+
+        <section>
+          <div class="section-heading">
+            <h2>素材</h2>
+            <button id="clearPhotos" class="ghost-button" type="button">清空</button>
+          </div>
+          <div id="assetStrip" class="asset-strip is-empty"></div>
+        </section>
+      </aside>
+
+      <section class="workspace" aria-label="相册预览">
+        <header class="workspace-bar">
+          <div>
+            <p class="eyebrow">自动生成</p>
+            <h2 id="activeStyleName">复古相册</h2>
+          </div>
+
+          <div class="toolbar">
+            <button id="prevPage" class="icon-button" type="button" title="上一页" aria-label="上一页">
+              <span aria-hidden="true">‹</span>
+            </button>
+            <span id="pageCounter" class="page-counter">1 / 1</span>
+            <button id="nextPage" class="icon-button" type="button" title="下一页" aria-label="下一页">
+              <span aria-hidden="true">›</span>
+            </button>
+            <button id="exportPng" class="tool-button" type="button" disabled>
+              <span aria-hidden="true">PNG</span>
+              导出本页
+            </button>
+            <button id="exportAllPng" class="tool-button" type="button" disabled>
+              <span aria-hidden="true">ALL</span>
+              导出图片
+            </button>
+            <button id="exportPdf" class="tool-button accent" type="button" disabled>
+              <span aria-hidden="true">PDF</span>
+              导出PDF
+            </button>
+          </div>
+        </header>
+
+        <section class="preview-stage">
+          <div class="page-shadow">
+            <canvas id="albumCanvas" class="album-canvas" width="1240" height="1754"></canvas>
+          </div>
+        </section>
+
+        <footer id="thumbRail" class="thumb-rail" aria-label="相册页缩略图"></footer>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
