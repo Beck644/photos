@@ -1,5 +1,11 @@
 const PAGE = Object.freeze({ width: 1240, height: 1754 });
 
+const PAPER_PRESETS = {
+  a4: { width: 1240, height: 1754, label: "A4" },
+  a3: { width: 1754, height: 2480, label: "A3" },
+  b5: { width: 1039, height: 1476, label: "B5" },
+};
+
 const STYLE_BACKGROUND_FILES = {
   vintage: "./assets/backgrounds/vintage.png",
   modern: "./assets/backgrounds/modern.png",
@@ -175,6 +181,7 @@ const PATTERNS = {
 };
 
 const state = {
+  mode: "album",
   photos: [],
   pages: [{ type: "empty", photos: [] }],
   pageCount: 4,
@@ -193,12 +200,32 @@ const state = {
   customRects: {},
   lastPlacements: [],
   drag: null,
+  free: {
+    width: PAPER_PRESETS.a4.width,
+    height: PAPER_PRESETS.a4.height,
+    preset: "a4",
+    photos: [],
+    customRects: {},
+    background: null,
+    backgroundUrl: "",
+    selectedPhotoId: null,
+    lastPlacements: [],
+  },
 };
 
 const els = {
+  albumModeBtn: document.getElementById("albumModeBtn"),
+  freeModeBtn: document.getElementById("freeModeBtn"),
   dropZone: document.getElementById("dropZone"),
   fileInput: document.getElementById("fileInput"),
   chooseFiles: document.getElementById("chooseFiles"),
+  freePaperPreset: document.getElementById("freePaperPreset"),
+  freeCanvasWidth: document.getElementById("freeCanvasWidth"),
+  freeCanvasHeight: document.getElementById("freeCanvasHeight"),
+  applyFreeCanvasSize: document.getElementById("applyFreeCanvasSize"),
+  freeBackgroundInput: document.getElementById("freeBackgroundInput"),
+  uploadFreeBackground: document.getElementById("uploadFreeBackground"),
+  clearFreeBackground: document.getElementById("clearFreeBackground"),
   pageCountInput: document.getElementById("pageCountInput"),
   applyPageCount: document.getElementById("applyPageCount"),
   pageStyleSelect: document.getElementById("pageStyleSelect"),
@@ -238,6 +265,8 @@ const els = {
 init();
 
 function init() {
+  document.documentElement.dataset.mode = state.mode;
+  syncFreeSizeInputs();
   syncPageStyles();
   renderStyleOptions();
   bindEvents();
@@ -246,11 +275,31 @@ function init() {
 }
 
 function bindEvents() {
+  els.albumModeBtn.addEventListener("click", () => setMode("album"));
+  els.freeModeBtn.addEventListener("click", () => setMode("free"));
   els.chooseFiles.addEventListener("click", () => els.fileInput.click());
   els.fileInput.addEventListener("change", (event) => {
     addFiles(event.target.files);
     event.target.value = "";
   });
+
+  els.freePaperPreset.addEventListener("change", () => {
+    const preset = PAPER_PRESETS[els.freePaperPreset.value];
+    if (preset) {
+      state.free.preset = els.freePaperPreset.value;
+      state.free.width = preset.width;
+      state.free.height = preset.height;
+      syncFreeSizeInputs();
+      resizeFreeItemsToCanvas();
+      renderEverything();
+      return;
+    }
+    state.free.preset = "custom";
+  });
+  els.applyFreeCanvasSize.addEventListener("click", applyFreeCanvasSize);
+  els.uploadFreeBackground.addEventListener("click", () => els.freeBackgroundInput.click());
+  els.freeBackgroundInput.addEventListener("change", handleFreeBackgroundInput);
+  els.clearFreeBackground.addEventListener("click", clearFreeBackground);
 
   ["dragenter", "dragover"].forEach((type) => {
     els.dropZone.addEventListener(type, (event) => {
@@ -386,14 +435,23 @@ async function addFiles(fileList) {
   for (const file of files) {
     try {
       const photo = await readPhoto(file);
-      state.photos.push(photo);
+      if (isFreeMode()) {
+        state.free.photos.push(photo);
+        createFreePhotoRect(photo);
+      } else {
+        state.photos.push(photo);
+      }
     } catch (error) {
       console.warn(`无法读取图片：${file.name}`, error);
     }
   }
 
-  clearCustomLayouts();
-  rebuildAlbum();
+  if (isFreeMode()) {
+    renderEverything();
+  } else {
+    clearCustomLayouts();
+    rebuildAlbum();
+  }
 }
 
 function readPhoto(file) {
@@ -423,6 +481,15 @@ function readPhoto(file) {
 }
 
 function clearPhotos() {
+  if (isFreeMode()) {
+    state.free.photos.forEach((photo) => URL.revokeObjectURL(photo.url));
+    state.free.photos = [];
+    state.free.customRects = {};
+    state.free.selectedPhotoId = null;
+    renderEverything();
+    return;
+  }
+
   state.photos.forEach((photo) => URL.revokeObjectURL(photo.url));
   state.photos = [];
   state.activePage = 0;
@@ -431,6 +498,17 @@ function clearPhotos() {
 }
 
 function removePhoto(id) {
+  if (isFreeMode()) {
+    const index = state.free.photos.findIndex((photo) => photo.id === id);
+    if (index === -1) return;
+    URL.revokeObjectURL(state.free.photos[index].url);
+    state.free.photos.splice(index, 1);
+    delete state.free.customRects[id];
+    if (state.free.selectedPhotoId === id) state.free.selectedPhotoId = null;
+    renderEverything();
+    return;
+  }
+
   const index = state.photos.findIndex((photo) => photo.id === id);
   if (index === -1) return;
   URL.revokeObjectURL(state.photos[index].url);
@@ -443,6 +521,100 @@ function clearCustomLayouts() {
   state.customRects = {};
   state.selectedPlacement = null;
   state.drag = null;
+}
+
+function isFreeMode() {
+  return state.mode === "free";
+}
+
+function getCanvasSize() {
+  return isFreeMode() ? { width: state.free.width, height: state.free.height } : PAGE;
+}
+
+function setMode(mode) {
+  state.mode = mode === "free" ? "free" : "album";
+  state.drag = null;
+  state.textDrag = null;
+  state.selectedPlacement = null;
+  state.free.selectedPhotoId = null;
+  state.selectedTextId = null;
+  document.documentElement.dataset.mode = state.mode;
+  els.albumModeBtn.classList.toggle("is-active", !isFreeMode());
+  els.freeModeBtn.classList.toggle("is-active", isFreeMode());
+  syncFreeSizeInputs();
+  renderEverything();
+}
+
+function syncFreeSizeInputs() {
+  els.freePaperPreset.value = state.free.preset;
+  els.freeCanvasWidth.value = Math.round(state.free.width);
+  els.freeCanvasHeight.value = Math.round(state.free.height);
+}
+
+function applyFreeCanvasSize() {
+  const nextWidth = Math.round(clamp(Number(els.freeCanvasWidth.value) || PAPER_PRESETS.a4.width, 320, 5000));
+  const nextHeight = Math.round(clamp(Number(els.freeCanvasHeight.value) || PAPER_PRESETS.a4.height, 320, 5000));
+  state.free.preset = "custom";
+  state.free.width = nextWidth;
+  state.free.height = nextHeight;
+  syncFreeSizeInputs();
+  resizeFreeItemsToCanvas();
+  renderEverything();
+}
+
+async function handleFreeBackgroundInput() {
+  const file = els.freeBackgroundInput.files?.[0];
+  if (!file) return;
+
+  try {
+    if (!file.type.startsWith("image/")) {
+      window.alert("请选择图片作为背景。");
+      return;
+    }
+    const photo = await readPhoto(file);
+    clearFreeBackground();
+    state.free.background = photo.image;
+    state.free.backgroundUrl = photo.url;
+    renderEverything();
+  } catch {
+    window.alert("背景图片读取失败，请换一张图片试试。");
+  } finally {
+    els.freeBackgroundInput.value = "";
+  }
+}
+
+function clearFreeBackground() {
+  if (state.free.backgroundUrl) URL.revokeObjectURL(state.free.backgroundUrl);
+  state.free.background = null;
+  state.free.backgroundUrl = "";
+  renderEverything();
+}
+
+function createFreePhotoRect(photo) {
+  const size = getCanvasSize();
+  const baseW = Math.min(size.width * 0.42, Math.max(180, size.width * 0.28));
+  const ratio = photo.height && photo.width ? photo.height / photo.width : 0.75;
+  const baseH = Math.min(size.height * 0.42, baseW * ratio);
+  const index = state.free.photos.length - 1;
+  const x = clamp(size.width * 0.16 + (index % 3) * size.width * 0.08, 0, size.width - baseW);
+  const y = clamp(size.height * 0.16 + (index % 4) * size.height * 0.07, 0, size.height - baseH);
+  state.free.customRects[photo.id] = { x, y, w: baseW, h: baseH, baseW, baseH, rotation: 0 };
+}
+
+function resizeFreeItemsToCanvas() {
+  const size = getCanvasSize();
+  Object.values(state.free.customRects).forEach((rect) => {
+    rect.w = clamp(rect.w, 40, size.width);
+    rect.h = clamp(rect.h, 40, size.height);
+    rect.x = clamp(rect.x, 0, size.width - rect.w);
+    rect.y = clamp(rect.y, 0, size.height - rect.h);
+  });
+  state.textBoxes.forEach((box) => {
+    if (box.pageIndex !== "free") return;
+    box.w = clamp(box.w, 120, size.width);
+    box.x = clamp(box.x, 0, size.width - box.w);
+    box.y = clamp(box.y, 0, size.height - 40);
+  });
 }
 
 function syncPageStyles() {
@@ -506,22 +678,26 @@ function renderEverything() {
 function renderControls() {
   const style = getStyle(state.activePage);
   const canExport = hasExportContent();
+  const activePhotos = isFreeMode() ? state.free.photos : state.photos;
 
-  els.photoCount.textContent = `${state.photos.length} 张`;
-  els.activeStyleName.textContent = `第 ${state.activePage + 1} 页 · ${style.name}相册`;
+  els.photoCount.textContent = `${activePhotos.length} 张`;
+  els.activeStyleName.textContent = isFreeMode() ? "自由创作画布" : `第 ${state.activePage + 1} 页 · ${style.name}相册`;
   els.pageCountInput.value = String(state.pageCount);
   els.pageStyleSelect.value = style.id;
-  els.prevPage.disabled = state.activePage <= 0;
-  els.nextPage.disabled = state.activePage >= state.pages.length - 1;
+  els.prevPage.disabled = isFreeMode() || state.activePage <= 0;
+  els.nextPage.disabled = isFreeMode() || state.activePage >= state.pages.length - 1;
   els.exportPng.disabled = !canExport;
   els.exportAllPng.disabled = !canExport;
   els.exportPdf.disabled = !canExport;
-  els.clearPhotos.disabled = state.photos.length === 0;
+  els.clearPhotos.disabled = activePhotos.length === 0;
   els.freeMoveToggle.checked = state.customLayoutEnabled;
-  els.albumCanvas.classList.toggle("is-editing", (state.customLayoutEnabled && state.photos.length > 0) || state.textBoxes.length > 0);
+  els.freeMoveToggle.disabled = isFreeMode();
+  els.clearFreeBackground.disabled = !state.free.background;
+  els.albumCanvas.classList.toggle("is-editing", (isFreeMode() && state.free.photos.length > 0) || (state.customLayoutEnabled && state.photos.length > 0) || state.textBoxes.length > 0);
   els.albumCanvas.classList.toggle("is-dragging", Boolean(state.drag || state.textDrag));
   renderPositionControls();
   renderTextControls();
+  updateCanvasFrame();
 
   document.querySelectorAll("[data-style]").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.style === style.id);
@@ -529,11 +705,18 @@ function renderControls() {
 }
 
 function renderPositionControls() {
-  const selected = getSelectedPlacement();
-  const enabled = Boolean(selected && state.customLayoutEnabled);
-  const hasPageCustom = Object.keys(state.customRects).some((key) => key.startsWith(`${state.activePage}:`));
+  const selected = isFreeMode() ? getSelectedFreePlacement() : getSelectedPlacement();
+  const enabled = Boolean(selected && (isFreeMode() || state.customLayoutEnabled));
+  const size = getCanvasSize();
+  const hasPageCustom = isFreeMode()
+    ? Object.keys(state.free.customRects).length > 0
+    : Object.keys(state.customRects).some((key) => key.startsWith(`${state.activePage}:`));
 
   els.selectedPhotoName.textContent = selected ? selected.photo.name : "未选中";
+  els.photoRotate.min = isFreeMode() ? 0 : -45;
+  els.photoRotate.max = isFreeMode() ? 360 : 45;
+  els.photoScale.min = isFreeMode() ? 10 : 55;
+  els.photoScale.max = isFreeMode() ? 300 : 145;
   els.photoX.disabled = !enabled;
   els.photoY.disabled = !enabled;
   els.photoScale.disabled = !enabled;
@@ -550,17 +733,18 @@ function renderPositionControls() {
   }
 
   const { rect, baseRect } = selected;
-  const xMax = Math.max(1, PAGE.width - rect.w);
-  const yMax = Math.max(1, PAGE.height - rect.h);
+  const xMax = Math.max(1, size.width - rect.w);
+  const yMax = Math.max(1, size.height - rect.h);
   els.photoX.value = Math.round((rect.x / xMax) * 100);
   els.photoY.value = Math.round((rect.y / yMax) * 100);
   els.photoScale.value = Math.round((rect.w / baseRect.w) * 100);
-  els.photoRotate.value = Math.round(rect.rotation || 0);
+  els.photoRotate.value = Math.round(isFreeMode() ? normalizeRotation(rect.rotation || 0) : rect.rotation || 0);
 }
 
 function renderTextControls() {
   const box = getSelectedTextBox();
   const enabled = Boolean(box);
+  const size = getCanvasSize();
 
   els.selectedTextName.textContent = box ? `文本 ${box.id}` : "未选中";
   els.deleteTextBox.disabled = !enabled;
@@ -571,6 +755,7 @@ function renderTextControls() {
   els.textSize.disabled = !enabled;
   els.textRotate.disabled = !enabled;
   els.textColor.disabled = !enabled;
+  els.textWidth.max = Math.max(180, Math.round(size.width));
 
   if (!box) {
     els.textContent.value = "";
@@ -583,10 +768,10 @@ function renderTextControls() {
     return;
   }
 
-  const xMax = Math.max(1, PAGE.width - box.w);
+  const xMax = Math.max(1, size.width - box.w);
   els.textContent.value = box.text;
   els.textX.value = Math.round((box.x / xMax) * 100);
-  els.textY.value = Math.round((box.y / PAGE.height) * 100);
+  els.textY.value = Math.round((box.y / size.height) * 100);
   els.textWidth.value = Math.round(box.w);
   els.textSize.value = Math.round(box.fontSize);
   els.textRotate.value = Math.round(box.rotation || 0);
@@ -595,14 +780,15 @@ function renderTextControls() {
 
 function renderAssets() {
   els.assetStrip.textContent = "";
-  els.assetStrip.classList.toggle("is-empty", state.photos.length === 0);
+  const photos = isFreeMode() ? state.free.photos : state.photos;
+  els.assetStrip.classList.toggle("is-empty", photos.length === 0);
 
-  if (!state.photos.length) {
+  if (!photos.length) {
     els.assetStrip.textContent = "暂无图片";
     return;
   }
 
-  state.photos.forEach((photo) => {
+  photos.forEach((photo) => {
     const item = document.createElement("div");
     item.className = "asset-item";
 
@@ -637,12 +823,34 @@ function renderAssets() {
 }
 
 function renderMainPage() {
+  if (isFreeMode()) {
+    renderFreePage(els.albumCanvas, 1, { interactive: true });
+    els.pageCounter.textContent = `${state.free.width} x ${state.free.height}`;
+    return;
+  }
+
   renderPage(els.albumCanvas, state.pages[state.activePage], state.activePage, 1, { interactive: true });
   els.pageCounter.textContent = `${state.activePage + 1} / ${state.pages.length}`;
 }
 
 function renderThumbnails() {
   els.thumbRail.textContent = "";
+
+  if (isFreeMode()) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "thumb-button is-active";
+
+    const canvas = document.createElement("canvas");
+    renderFreePage(canvas, 0.13);
+
+    const label = document.createElement("span");
+    label.textContent = "自由画布";
+
+    button.append(canvas, label);
+    els.thumbRail.appendChild(button);
+    return;
+  }
 
   state.pages.forEach((page, index) => {
     const button = document.createElement("button");
@@ -665,6 +873,13 @@ function renderThumbnails() {
 function setActivePage(index) {
   state.activePage = Math.max(0, Math.min(index, state.pages.length - 1));
   renderEverything();
+}
+
+function updateCanvasFrame() {
+  const size = getCanvasSize();
+  const frame = els.albumCanvas.closest(".page-shadow");
+  if (!frame) return;
+  frame.style.aspectRatio = `${size.width} / ${size.height}`;
 }
 
 function getStyle(pageIndex = state.activePage) {
@@ -703,6 +918,76 @@ function renderPage(canvas, page, pageIndex, scale = 1, options = {}) {
 
   if (renderOptions.interactive) {
     drawInteractiveOverlay(ctx, style, pageIndex);
+  }
+
+  ctx.restore();
+}
+
+function renderFreePage(canvas, scale = 1, options = {}) {
+  const size = getCanvasSize();
+  const renderOptions = { interactive: false, ...options };
+  const style = {
+    id: "free",
+    ink: "#171816",
+    muted: "#6d706b",
+    accent: "#2f6f67",
+    frame: "#ffffff",
+    font: '"Microsoft YaHei", "PingFang SC", Arial, sans-serif',
+    imageFilter: "none",
+    dark: false,
+  };
+
+  canvas.width = Math.round(size.width * scale);
+  canvas.height = Math.round(size.height * scale);
+
+  const ctx = canvas.getContext("2d");
+  if (renderOptions.interactive) {
+    state.free.lastPlacements = [];
+    state.lastTextBoxes = [];
+  }
+
+  ctx.save();
+  ctx.scale(scale, scale);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, size.width, size.height);
+
+  if (state.free.background) {
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    drawImageCover(ctx, state.free.background, 0, 0, size.width, size.height);
+    ctx.restore();
+  }
+
+  state.free.photos.forEach((photo) => {
+    const rect = getFreePhotoRect(photo);
+    drawPhotoCard(ctx, photo, rect.x, rect.y, rect.w, rect.h, style, {
+      radius: 0,
+      pad: 0,
+      rotation: rect.rotation,
+      shadow: true,
+    });
+    if (renderOptions.interactive) {
+      const baseRect = {
+        ...rect,
+        w: rect.baseW || rect.w,
+        h: rect.baseH || rect.h,
+        rotation: 0,
+      };
+      state.free.lastPlacements.push({
+        pageIndex: "free",
+        photo,
+        photoId: photo.id,
+        rect: { ...rect },
+        baseRect,
+      });
+    }
+  });
+
+  drawTextBoxes(ctx, style, "free", renderOptions);
+
+  if (renderOptions.interactive) {
+    drawFreeInteractiveOverlay(ctx, style);
   }
 
   ctx.restore();
@@ -968,6 +1253,53 @@ function recordPlacement(pageIndex, photo, rect, baseRect, options) {
   });
 }
 
+function getFreePhotoRect(photo) {
+  if (!state.free.customRects[photo.id]) createFreePhotoRect(photo);
+  return state.free.customRects[photo.id];
+}
+
+function getSelectedFreePlacement() {
+  if (!state.free.selectedPhotoId) return null;
+  return state.free.lastPlacements.find((placement) => placement.photoId === state.free.selectedPhotoId) || null;
+}
+
+function drawFreeInteractiveOverlay(ctx, style) {
+  state.free.lastPlacements.forEach((placement) => {
+    const selected = placement.photoId === state.free.selectedPhotoId;
+    const { rect } = placement;
+
+    ctx.save();
+    ctx.translate(rect.x + rect.w / 2, rect.y + rect.h / 2);
+    ctx.rotate(((rect.rotation || 0) * Math.PI) / 180);
+    ctx.setLineDash(selected ? [] : [14, 12]);
+    ctx.lineWidth = selected ? 6 : 3;
+    ctx.strokeStyle = selected ? style.accent : "rgba(23,24,22,0.28)";
+    ctx.strokeRect(-rect.w / 2 - 8, -rect.h / 2 - 8, rect.w + 16, rect.h + 16);
+
+    if (selected) {
+      ctx.fillStyle = style.accent;
+      ctx.beginPath();
+      ctx.arc(rect.w / 2 + 6, rect.h / 2 + 6, 18, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  });
+
+  state.lastTextBoxes.forEach(({ box, rect }) => {
+    const selected = box.id === state.selectedTextId;
+
+    ctx.save();
+    ctx.translate(rect.x + rect.w / 2, rect.y + rect.h / 2);
+    ctx.rotate(((rect.rotation || 0) * Math.PI) / 180);
+    ctx.setLineDash(selected ? [] : [12, 10]);
+    ctx.lineWidth = selected ? 5 : 3;
+    ctx.strokeStyle = selected ? style.accent : "rgba(23,24,22,0.28)";
+    roundRect(ctx, -rect.w / 2 - 12, -rect.h / 2 - 12, rect.w + 24, rect.h + 24, 10);
+    ctx.stroke();
+    ctx.restore();
+  });
+}
+
 function drawInteractiveOverlay(ctx, style, pageIndex) {
   if (state.customLayoutEnabled && state.photos.length) {
     state.lastPlacements.forEach((placement) => {
@@ -1039,10 +1371,34 @@ function handleCanvasPointerDown(event) {
   if (textBox) {
     state.selectedTextId = textBox.box.id;
     state.selectedPlacement = null;
+    state.free.selectedPhotoId = null;
     state.textDrag = {
       id: textBox.box.id,
       offsetX: point.x - textBox.box.x,
       offsetY: point.y - textBox.box.y,
+    };
+    els.albumCanvas.setPointerCapture(event.pointerId);
+    renderEverything();
+    return;
+  }
+
+  if (isFreeMode()) {
+    const placement = hitTestFreePlacement(point.x, point.y);
+    if (!placement) {
+      state.free.selectedPhotoId = null;
+      state.selectedTextId = null;
+      renderEverything();
+      return;
+    }
+
+    const rect = getFreePhotoRect(placement.photo);
+    state.free.selectedPhotoId = placement.photoId;
+    state.selectedTextId = null;
+    state.drag = {
+      kind: "free-photo",
+      photoId: placement.photoId,
+      offsetX: point.x - rect.x,
+      offsetY: point.y - rect.y,
     };
     els.albumCanvas.setPointerCapture(event.pointerId);
     renderEverything();
@@ -1080,10 +1436,24 @@ function handleCanvasPointerMove(event) {
     const point = getCanvasPoint(event);
     const box = state.textBoxes.find((item) => item.id === state.textDrag.id);
     if (!box) return;
-    box.x = clamp(point.x - state.textDrag.offsetX, 0, PAGE.width - box.w);
-    box.y = clamp(point.y - state.textDrag.offsetY, 0, PAGE.height - 40);
+    const size = getCanvasSize();
+    box.x = clamp(point.x - state.textDrag.offsetX, 0, size.width - box.w);
+    box.y = clamp(point.y - state.textDrag.offsetY, 0, size.height - 40);
     renderMainPage();
     renderTextControls();
+    renderThumbnails();
+    return;
+  }
+
+  if (state.drag?.kind === "free-photo") {
+    const point = getCanvasPoint(event);
+    const size = getCanvasSize();
+    const rect = state.free.customRects[state.drag.photoId];
+    if (!rect) return;
+    rect.x = clamp(point.x - state.drag.offsetX, 0, size.width - rect.w);
+    rect.y = clamp(point.y - state.drag.offsetY, 0, size.height - rect.h);
+    renderMainPage();
+    renderPositionControls();
     renderThumbnails();
     return;
   }
@@ -1113,6 +1483,16 @@ function handleCanvasPointerUp(event) {
 function hitTestPlacement(x, y) {
   for (let index = state.lastPlacements.length - 1; index >= 0; index -= 1) {
     const placement = state.lastPlacements[index];
+    if (pointInsidePlacement(x, y, placement)) {
+      return placement;
+    }
+  }
+  return null;
+}
+
+function hitTestFreePlacement(x, y) {
+  for (let index = state.free.lastPlacements.length - 1; index >= 0; index -= 1) {
+    const placement = state.free.lastPlacements[index];
     if (pointInsidePlacement(x, y, placement)) {
       return placement;
     }
@@ -1170,6 +1550,11 @@ function ensureCustomRect(placement) {
 }
 
 function updateSelectedFromSliders() {
+  if (isFreeMode()) {
+    updateSelectedFreeFromSliders();
+    return;
+  }
+
   const placement = getSelectedPlacement();
   if (!placement || !state.customLayoutEnabled) return;
 
@@ -1190,21 +1575,52 @@ function updateSelectedFromSliders() {
   renderPositionControls();
 }
 
+function updateSelectedFreeFromSliders() {
+  const placement = getSelectedFreePlacement();
+  if (!placement) return;
+
+  const size = getCanvasSize();
+  const rect = getFreePhotoRect(placement.photo);
+  const scale = Math.max(0.1, Number(els.photoScale.value) / 100);
+  const nextW = placement.baseRect.w * scale;
+  const nextH = placement.baseRect.h * scale;
+  const xMax = Math.max(1, size.width - nextW);
+  const yMax = Math.max(1, size.height - nextH);
+
+  rect.w = clamp(nextW, 20, size.width);
+  rect.h = clamp(nextH, 20, size.height);
+  rect.x = clamp((Number(els.photoX.value) / 100) * xMax, 0, size.width - rect.w);
+  rect.y = clamp((Number(els.photoY.value) / 100) * yMax, 0, size.height - rect.h);
+  rect.rotation = normalizeRotation(Number(els.photoRotate.value) || 0);
+  renderMainPage();
+  renderPositionControls();
+  renderThumbnails();
+}
+
 function deleteSelectedPhoto() {
+  if (isFreeMode()) {
+    const selected = getSelectedFreePlacement();
+    if (!selected) return;
+    removePhoto(selected.photoId);
+    return;
+  }
+
   const selected = getSelectedPlacement();
   if (!selected) return;
   removePhoto(selected.photoId);
 }
 
 function addTextBox() {
-  const style = getStyle();
+  const style = isFreeMode() ? { dark: false, ink: "#171816" } : getStyle();
+  const size = getCanvasSize();
+  const width = Math.min(720, size.width - 120);
   const box = {
     id: state.nextTextId++,
-    pageIndex: state.activePage,
+    pageIndex: isFreeMode() ? "free" : state.activePage,
     text: "新文本",
-    x: 180,
-    y: 1220,
-    w: 720,
+    x: Math.max(40, (size.width - width) / 2),
+    y: Math.max(40, size.height * 0.68),
+    w: width,
     fontSize: 54,
     rotation: 0,
     color: style.dark ? "#ffffff" : style.ink,
@@ -1230,14 +1646,15 @@ function updateSelectedTextBox() {
   const box = getSelectedTextBox();
   if (!box) return;
 
+  const size = getCanvasSize();
   const width = Number(els.textWidth.value);
   box.text = els.textContent.value;
-  box.w = width;
+  box.w = Math.min(width, size.width);
   box.fontSize = Number(els.textSize.value);
   box.rotation = Number(els.textRotate.value) || 0;
   box.color = els.textColor.value;
-  box.x = clamp((Number(els.textX.value) / 100) * Math.max(1, PAGE.width - width), 0, PAGE.width - width);
-  box.y = clamp((Number(els.textY.value) / 100) * PAGE.height, 0, PAGE.height - 40);
+  box.x = clamp((Number(els.textX.value) / 100) * Math.max(1, size.width - box.w), 0, size.width - box.w);
+  box.y = clamp((Number(els.textY.value) / 100) * size.height, 0, size.height - 40);
 
   renderMainPage();
   renderTextControls();
@@ -1253,6 +1670,14 @@ function deleteSelectedTextBox() {
 }
 
 function resetActivePageLayout() {
+  if (isFreeMode()) {
+    state.free.customRects = {};
+    state.free.photos.forEach(createFreePhotoRect);
+    state.free.selectedPhotoId = null;
+    renderEverything();
+    return;
+  }
+
   Object.keys(state.customRects).forEach((key) => {
     if (key.startsWith(`${state.activePage}:`)) {
       delete state.customRects[key];
@@ -1264,15 +1689,20 @@ function resetActivePageLayout() {
 
 function getCanvasPoint(event) {
   const bounds = els.albumCanvas.getBoundingClientRect();
+  const size = getCanvasSize();
   return {
-    x: ((event.clientX - bounds.left) / bounds.width) * PAGE.width,
-    y: ((event.clientY - bounds.top) / bounds.height) * PAGE.height,
+    x: ((event.clientX - bounds.left) / bounds.width) * size.width,
+    y: ((event.clientY - bounds.top) / bounds.height) * size.height,
   };
 }
 
 function clamp(value, min, max) {
   if (max < min) return min;
   return Math.min(Math.max(value, min), max);
+}
+
+function normalizeRotation(value) {
+  return ((value % 360) + 360) % 360;
 }
 
 function drawEmptyPage(ctx, style) {
@@ -2058,13 +2488,16 @@ function seededRandom(seed) {
 }
 
 function hasExportContent() {
+  if (isFreeMode()) {
+    return state.free.photos.length > 0 || Boolean(state.free.background) || getPageTextBoxes("free").length > 0;
+  }
   return state.photos.length > 0 || state.textBoxes.length > 0;
 }
 
 function getAlbumBaseName() {
-  const firstText = state.textBoxes.find((box) => box.text.trim());
-  if (!firstText) return "自定义相册";
-  return firstText.text.trim().replace(/\s+/g, "").slice(0, 24) || "自定义相册";
+  const firstText = state.textBoxes.find((box) => box.text.trim() && (isFreeMode() ? box.pageIndex === "free" : box.pageIndex !== "free"));
+  if (!firstText) return isFreeMode() ? "自由创作" : "自定义相册";
+  return firstText.text.trim().replace(/\s+/g, "").slice(0, 24) || (isFreeMode() ? "自由创作" : "自定义相册");
 }
 
 function formatBytes(bytes) {
@@ -2082,12 +2515,20 @@ async function exportPagePng(pageIndex) {
   if (!hasExportContent()) return;
   const canvas = renderPageToCanvas(pageIndex);
   const blob = await canvasToBlob(canvas, "image/png");
-  downloadBlob(blob, `${sanitizeFileName(getAlbumBaseName())}-第${pageIndex + 1}页.png`);
+  downloadBlob(blob, isFreeMode() ? `${sanitizeFileName(getAlbumBaseName())}.png` : `${sanitizeFileName(getAlbumBaseName())}-第${pageIndex + 1}页.png`);
 }
 
 async function exportAllPng() {
   if (!hasExportContent()) return;
   els.exportAllPng.disabled = true;
+
+  if (isFreeMode()) {
+    const canvas = renderPageToCanvas(0);
+    const blob = await canvasToBlob(canvas, "image/png");
+    downloadBlob(blob, `${sanitizeFileName(getAlbumBaseName())}.png`);
+    renderControls();
+    return;
+  }
 
   for (let index = 0; index < state.pages.length; index += 1) {
     const canvas = renderPageToCanvas(index);
@@ -2103,9 +2544,15 @@ async function exportPdf() {
   if (!hasExportContent()) return;
   els.exportPdf.disabled = true;
 
-  const images = state.pages.map((page, index) => {
-    const canvas = document.createElement("canvas");
-    renderPage(canvas, page, index, 1);
+  const canvases = isFreeMode()
+    ? [renderPageToCanvas(0)]
+    : state.pages.map((page, index) => {
+        const canvas = document.createElement("canvas");
+        renderPage(canvas, page, index, 1);
+        return canvas;
+      });
+
+  const images = canvases.map((canvas) => {
     const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
     return {
       bytes: dataUrlToBytes(dataUrl),
@@ -2121,6 +2568,10 @@ async function exportPdf() {
 
 function renderPageToCanvas(pageIndex) {
   const canvas = document.createElement("canvas");
+  if (isFreeMode()) {
+    renderFreePage(canvas, 1);
+    return canvas;
+  }
   renderPage(canvas, state.pages[pageIndex], pageIndex, 1);
   return canvas;
 }
@@ -2146,8 +2597,6 @@ function createPdfBlob(images) {
   const chunks = [];
   const offsets = [];
   let offset = 0;
-  const pageWidth = 595.28;
-  const pageHeight = 841.89;
   const objectCount = 2 + images.length * 3;
 
   const addBytes = (bytes) => {
@@ -2173,6 +2622,10 @@ function createPdfBlob(images) {
   endObject();
 
   images.forEach((image, index) => {
+    const longSide = 841.89;
+    const ratio = image.width / image.height;
+    const pageWidth = ratio >= 1 ? longSide : longSide * ratio;
+    const pageHeight = ratio >= 1 ? longSide / ratio : longSide;
     const pageId = 3 + index * 3;
     const contentId = pageId + 1;
     const imageId = pageId + 2;

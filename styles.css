@@ -181,6 +181,7 @@ button {
 .tool-button,
 .ghost-button,
 .icon-button,
+.mode-tabs button,
 .segmented-control button,
 .style-option,
 .asset-action,
@@ -224,6 +225,7 @@ button {
 .tool-button:hover:not(:disabled),
 .ghost-button:hover,
 .icon-button:hover:not(:disabled),
+.mode-tabs button:hover,
 .segmented-control button:hover,
 .style-option:hover,
 .asset-action:hover,
@@ -241,6 +243,43 @@ button {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 10px;
+}
+
+.free-only {
+  display: none;
+}
+
+html[data-mode="free"] .album-only {
+  display: none;
+}
+
+html[data-mode="free"] .free-only {
+  display: grid;
+}
+
+.mode-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  padding: 4px;
+  background: var(--soft);
+  border: 1px solid rgba(23, 24, 22, 0.08);
+  border-radius: 8px;
+}
+
+.mode-tabs button {
+  min-width: 0;
+  height: 38px;
+  color: var(--muted);
+  background: transparent;
+  border-radius: 6px;
+  font-weight: 900;
+}
+
+.mode-tabs button.is-active {
+  color: #fff;
+  background: var(--accent-strong);
+  box-shadow: 0 3px 12px rgba(23, 24, 22, 0.16);
 }
 
 .album-set-row {
@@ -263,7 +302,8 @@ button {
 }
 
 .album-set-row input,
-.style-select {
+.style-select,
+.free-size-grid input {
   width: 100%;
   height: 40px;
   padding: 0 12px;
@@ -276,6 +316,25 @@ button {
 
 .style-select {
   margin-bottom: 10px;
+}
+
+.free-size-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 8px;
+}
+
+.free-size-grid label {
+  display: grid;
+  gap: 6px;
+}
+
+.free-size-grid span,
+.field-group span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .style-grid {
@@ -726,6 +785,10 @@ button {
   }
 
   .style-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .free-size-grid {
     grid-template-columns: 1fr;
   }
 
